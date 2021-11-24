@@ -13,11 +13,26 @@ class MeterOcr:
     def getDigits(self):
         img = cv2.imread(self._path, cv2.IMREAD_COLOR)
 
-        center = self.find_sample(img)
+        center = self.find_sample(img, 'samples/sample.jpg')
 
         lines = self.get_lines(img, center)
 
         img = self.align_and_crop_with_lines(img, lines, center)
+
+        img = self.crop_sides(img)
+
+    def crop_sides(self, img):
+        h, w, k = img.shape
+        c_x, c_y, x, y = self.find_sample(img, 'samples/sample-right.jpg')
+        img = img[0:h, 0:x]
+        self.log_image(img)
+
+        gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+        thres = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 2)
+        kernel = np.ones((10,10),np.uint8)
+        thres = cv2.morphologyEx(thres, cv2.MORPH_CLOSE, kernel)
+        self.log_image(thres)
+
 
     def align_and_crop_with_lines(self, img, lines, center):
         def y_for_line(x, r, theta):
@@ -26,7 +41,7 @@ class MeterOcr:
             return (r - (x * np.cos(theta))) / np.sin(theta)
 
         h, w, k = img.shape
-        x_center, y_center = center
+        x_center, y_center, x, y = center
         rho_above, theta_above = lines[0][0]
         rho_below, theta_below = lines[1][0]
         #M = cv2.getRotationMatrix2D(
@@ -58,11 +73,12 @@ class MeterOcr:
         img = img[y_above_center:y_below_center, 0:w]
         
         self.log_image(img)
-        
+
+        return img
 
     def get_lines(self, img, center):
         h, w, k = img.shape
-        x_center, y_center = center
+        x_center, y_center, x , y = center
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         edges = cv2.Canny(gray, 100, 300)
@@ -96,8 +112,8 @@ class MeterOcr:
 
         return [line_above, line_below]
 
-    def find_sample(self, img):
-        sample = cv2.imread("samples/sample.jpg")
+    def find_sample(self, img, path):
+        sample = cv2.imread(path)
         sample_h, sample_w, sample_k = sample.shape
         res = cv2.matchTemplate(img, sample, cv2.TM_CCORR_NORMED)
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
@@ -113,7 +129,7 @@ class MeterOcr:
             max_loc[0] + sample_w, max_loc[1] + sample_h), (0, 0, 255), 5)
         self.log_image(log_img)
 
-        return x_center, y_center
+        return x_center, y_center, max_loc[0], max_loc[1]
 
     def log(self, message, data=None):
         log_msg = message
