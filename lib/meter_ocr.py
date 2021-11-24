@@ -6,12 +6,32 @@ import numpy as np
 
 class MeterOcr:
     _log_count = 0
+    _ratio = .25
 
     def __init__(self, path):
         self._path = path
 
     def getDigits(self):
         img = cv2.imread(self._path, cv2.IMREAD_COLOR)
+        
+        h, w, k = img.shape
+
+        img = cv2.resize(img, (int(w * self._ratio ), int (h * self._ratio)))
+        img = cv2.rotate(img, cv2.ROTATE_180)
+        h, w, k = img.shape
+
+        center = self.find_sample(img, 'samples/sample.jpg')
+
+        c_x, c_y, x , y = center
+        if h/2 > c_y:
+            self.log(f'{int(c_y * 2)}')
+            img = img[0:int(c_y * 2), 0:w]
+        else:
+            self.log(int(h - (h - c_y) * 2))
+            img = img[int(h - (h - c_y) * 2):h, 0:w]
+
+        
+        self.log_image(img)
 
         center = self.find_sample(img, 'samples/sample.jpg')
 
@@ -44,29 +64,32 @@ class MeterOcr:
         x_center, y_center, x, y = center
         rho_above, theta_above = lines[0][0]
         rho_below, theta_below = lines[1][0]
-        #M = cv2.getRotationMatrix2D(
-        #    (0, (rho_below-rho_above)/2+rho_above), theta_above/np.pi*180-90, 1)
-        
-        #img = cv2.warpAffine(img, M, (w, h))
+       
 
-        pts1 = np.float32([
-            [x_center - 100, y_for_line(x_center - 100, rho_above, theta_above)],
-            [x_center + 100, y_for_line(x_center + 100, rho_above, theta_above)],
-            [x_center - 100, y_for_line(x_center - 100, rho_below, theta_below)],
-            [x_center + 100, y_for_line(x_center + 100, rho_below, theta_below)],
-        ])
+        # pts1 = np.float32([
+        #     [x_center - 100, y_for_line(x_center - 100, rho_above, theta_above)],
+        #     [x_center + 100, y_for_line(x_center + 100, rho_above, theta_above)],
+        #     [x_center - 100, y_for_line(x_center - 100, rho_below, theta_below)],
+        #     [x_center + 100, y_for_line(x_center + 100, rho_below, theta_below)],
+        # ])
         y_above_center = int(y_for_line(x_center, rho_above, theta_above))
         y_below_center = int(y_for_line(x_center, rho_below, theta_below))
-        pts2 = np.float32([
-            [x_center - 100, y_above_center],
-            [x_center + 100, y_above_center],
-            [x_center - 100, y_below_center],
-            [x_center + 100, y_below_center],
-        ])
+        # pts2 = np.float32([
+        #     [x_center - 100, y_above_center],
+        #     [x_center + 100, y_above_center],
+        #     [x_center - 100, y_below_center],
+        #     [x_center + 100, y_below_center],
+        # ])
 
         img = self.draw_lines(img, lines)
-        M = cv2.getPerspectiveTransform(pts1, pts2)
-        img = cv2.warpPerspective(img, M, (w,h))
+
+        M = cv2.getRotationMatrix2D(
+           (0, (rho_below-rho_above)/2+rho_above), theta_above/np.pi*180-90, 1)
+        
+        img = cv2.warpAffine(img, M, (w, h))
+
+        # M = cv2.getPerspectiveTransform(pts1, pts2)
+        # img = cv2.warpPerspective(img, M, (w,h))
         
         self.log_image(img)
 
@@ -80,11 +103,21 @@ class MeterOcr:
         h, w, k = img.shape
         x_center, y_center, x , y = center
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (3,3), 1)
 
-        edges = cv2.Canny(gray, 100, 300)
+        self.log_image(gray, 'gray')
+
+
+        # for i in range(10, 300, 10):
+        #     for j in range(10, i, 10):
+        #         edges = cv2.Canny(gray, j, i)
+        #         self.log_image(edges, f'test_{j}_{i}')
+
+
+        edges = cv2.Canny(gray, 100, 200)
         self.log_image(edges, 'edges')
 
-        lines = cv2.HoughLines(edges, 1, np.pi/180, threshold=110)
+        lines = cv2.HoughLines(edges, 1, np.pi/180, threshold=100)
         self.log_image(self.draw_lines(img, lines))
 
         rho_below = rho_above = np.sqrt(h*h+w*w)
@@ -115,6 +148,9 @@ class MeterOcr:
     def find_sample(self, img, path):
         sample = cv2.imread(path)
         sample_h, sample_w, sample_k = sample.shape
+        sample = cv2.resize(sample, (int(sample_w * self._ratio ), int (sample_h * self._ratio)))
+        sample_h, sample_w, sample_k = sample.shape
+
         res = cv2.matchTemplate(img, sample, cv2.TM_CCORR_NORMED)
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
 
