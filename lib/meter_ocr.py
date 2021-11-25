@@ -12,16 +12,85 @@ class MeterOcr:
         self._path = path
 
     def getDigits(self):
-        img = cv2.imread(self._path, cv2.IMREAD_COLOR)
-        
-        h, w, k = img.shape
-
-        img = cv2.resize(img, (int(w * self._ratio ), int (h * self._ratio)))
-        img = cv2.rotate(img, cv2.ROTATE_180)
-        h, w, k = img.shape
+        img = self.get_image()        
 
         center = self.find_sample(img, 'samples/sample.jpg')
 
+        img = self.crop_image(img, center)
+
+        center = self.find_sample(img, 'samples/sample.jpg')
+
+        lines = self.get_lines(img, center, 100)
+
+        img = self.align_and_crop_with_lines(img, lines, center)
+
+        center = self.find_sample(img, 'samples/sample.jpg')
+
+        lines = self.get_lines(img, center, 70, 90)
+
+        img = self.align_and_crop_with_lines(img, lines, center)
+
+        img = self.crop_sides(img)
+
+        digits = self.split_digits(img, 7)
+
+        contours = self.get_contours(digits)
+
+    def get_contours(self, digits):
+        for digit in digits:
+
+            digit = self.cut_white_sides(digit, (4,4), True)
+
+           
+            digit_grey = cv2.cvtColor(digit,cv2.COLOR_BGR2GRAY) 
+            digit_grey = cv2.adaptiveThreshold(digit_grey,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 9, 0)  
+            self.log_image(digit_grey)
+            dh, dw = digit_grey.shape
+            contours, hierarhy = cv2.findContours(digit_grey.copy(),cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+            biggest_contour = None
+            biggest_contour_area = 0
+            for contour in contours:
+                M = cv2.moments(contour)
+
+                
+                if cv2.contourArea(contour)<30:
+                    continue
+                
+                if cv2.arcLength(contour,True)<30:
+                    continue
+
+                
+                cx = M['m10']/M['m00']
+                cy = M['m01']/M['m00']
+
+                # if cx/dw<0.3 or cx/dw>0.7:
+                #     continue
+                if cv2.contourArea(contour)>biggest_contour_area:
+                    biggest_contour = contour
+                    biggest_contour_area = cv2.contourArea(contour)
+                    biggest_contour_cx = cx
+                    biggest_contour_cy = cy
+            self.log_image(cv2.drawContours( digit.copy(), [biggest_contour], -1, (0,0,255), 1, cv2.LINE_8))
+
+            mask = np.zeros(digit.shape,np.uint8)
+            cv2.drawContours(mask,[biggest_contour],0,255,-1)
+            digit = cv2.bitwise_and(digit,digit,mask = mask)
+            self.log_image(digit)    
+
+    def split_digits(self, img, count):
+        h, w, k = img.shape
+        digits = []
+        for i in range(1, count + 1):
+            digit = img[0:h, int((i-1)*w/count):int(i*w/count)]
+            self.log_image(digit)
+            
+            digits.append(digit)
+            
+        return digits
+
+        
+    def crop_image(self, img, center):
+        h, w, k = img.shape
         c_x, c_y, x , y = center
         if h/2 > c_y:
             self.log(f'{int(c_y * 2)}')
@@ -32,26 +101,57 @@ class MeterOcr:
 
         
         self.log_image(img)
+        return img
 
-        center = self.find_sample(img, 'samples/sample.jpg')
+    def get_image(self):
+        img = cv2.imread(self._path, cv2.IMREAD_COLOR)
+        
+        h, w, k = img.shape
 
-        lines = self.get_lines(img, center)
-
-        img = self.align_and_crop_with_lines(img, lines, center)
-
-        img = self.crop_sides(img)
+        img = cv2.resize(img, (int(w * self._ratio ), int (h * self._ratio)))
+        img = cv2.rotate(img, cv2.ROTATE_180)
+        return img
 
     def crop_sides(self, img):
         h, w, k = img.shape
         c_x, c_y, x, y = self.find_sample(img, 'samples/sample-right.jpg')
         img = img[0:h, 0:x]
         self.log_image(img)
+        
+        
+        
+        img = self.cut_white_sides(img, (6,6))
+        
 
+        return img
+
+    def cut_white_sides(self, img, shape, rigth = False):
+        h, w, k = img.shape
         gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
         thres = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 2)
-        kernel = np.ones((10,10),np.uint8)
+        kernel = np.ones(shape,np.uint8)
         thres = cv2.morphologyEx(thres, cv2.MORPH_CLOSE, kernel)
         self.log_image(thres)
+        x_left=0
+        while x_left<w :
+            if thres[int(h/2),x_left]==0:
+                break
+            x_left+=1
+        img = img[:, x_left:w]
+        thres = thres[:, x_left:w]
+        if rigth:
+            h, w, k = img.shape
+            x_right=w - 1
+            while x_right>=0 :
+                if thres[int(h/2),x_right]==0:
+                    break
+                x_right-=1
+            img = img[:, 0: x_right]
+       
+        self.log_image(img)
+        return img
+
+    
 
 
     def align_and_crop_with_lines(self, img, lines, center):
@@ -81,7 +181,7 @@ class MeterOcr:
         #     [x_center + 100, y_below_center],
         # ])
 
-        img = self.draw_lines(img, lines)
+        #img = self.draw_lines(img, lines)
 
         M = cv2.getRotationMatrix2D(
            (0, (rho_below-rho_above)/2+rho_above), theta_above/np.pi*180-90, 1)
@@ -93,15 +193,16 @@ class MeterOcr:
         
         self.log_image(img)
 
-        img = img[y_above_center:y_below_center, 0:w]
+        img = img[int(rho_above):int(rho_below), 0:w]
         
         self.log_image(img)
 
         return img
 
-    def get_lines(self, img, center):
+    def get_lines(self, img, center, thr = 110, thr1 = 100):
         h, w, k = img.shape
         x_center, y_center, x , y = center
+        
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (3,3), 1)
 
@@ -113,11 +214,10 @@ class MeterOcr:
         #         edges = cv2.Canny(gray, j, i)
         #         self.log_image(edges, f'test_{j}_{i}')
 
-
-        edges = cv2.Canny(gray, 100, 200)
+        edges = cv2.Canny(gray, thr, thr * 2, L2gradient=True)
         self.log_image(edges, 'edges')
 
-        lines = cv2.HoughLines(edges, 1, np.pi/180, threshold=100)
+        lines = cv2.HoughLines(edges, 1, np.pi/180, threshold=thr1)
         self.log_image(self.draw_lines(img, lines))
 
         rho_below = rho_above = np.sqrt(h*h+w*w)
